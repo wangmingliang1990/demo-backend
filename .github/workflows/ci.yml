@@ -1,19 +1,70 @@
+# 后端 CI 流水线：三个阶段（job 之间用 needs 串联，前一个失败后面不执行）
+#
+#   test ──needs──> build-image ──needs──> notify-frontend
+#   (检查+测试)     (构建并推送镜像)        (通知前端跑集成测试)
+
 name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: [main]     # 推送到 main 时触发
+  pull_request:          # 提 PR 时也触发（但 PR 不构建镜像，见 build-image 的 if）
 
 jobs:
+  # ── 阶段1：代码检查 + 单元测试 ──────────────────────────────
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4            # 把仓库代码下载到虚拟机
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run tests
+        run: pip install -r requirements.txt ruff   # ruff 是 lint 工具，只在 CI 用，不进 requirements
+      - name: Lint (ruff)                    # 静态检查：不运行代码，扫风格问题和低级错误
+        run: ruff check .
+      - name: Run tests                      # 单元测试：mock 环境，不依赖任何外部服务
         run: pytest -v
+
+  # ── 阶段2：构建 Docker 镜像并推到 ghcr.io ────────────────────
+  build-image:
+    needs: test                              # 必须等 test 全绿才构建（坏代码不配变成镜像）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+                                             # 只有推送到 main 才发布镜像；PR 只跑测试
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write                        # 授权本次运行可以往 ghcr.io 推镜像
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3  # 启用 buildx（GitHub 官方推荐的构建方式）
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}          # 自动填：触发者用户名
+          password: ${{ secrets.GITHUB_TOKEN }}  # 自动注入的临时令牌，推自己仓库的镜像不用配 secret
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # 打两个标签：按 commit SHA 精确版本（前端集成测试用，可溯源）+ latest
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+
+  # ── 阶段3：通知前端仓库"新镜像已就绪" ────────────────────────
+  notify-frontend:
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger frontend integration test
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}  # 你在后端仓库设置里加的 PAT secret
+        run: |
+          # 调用 GitHub API 给 demo-frontend 仓库发一个自定义事件，
+          # 并通过 client_payload 把本次镜像的完整地址传给前端工作流
+          gh api repos/${{ github.repository_owner }}/demo-frontend/dispatches \
+            -f event_type=backend-image-updated \
+            -f "client_payload[image]=ghcr.io/${{ github.repository }}:${{ github.sha }}"
