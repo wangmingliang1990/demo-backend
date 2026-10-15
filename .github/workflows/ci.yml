@@ -68,3 +68,11 @@ jobs:
           gh api repos/${{ github.repository_owner }}/demo-frontend/dispatches \
             -f event_type=backend-image-updated \
             -f "client_payload[image]=ghcr.io/${{ github.repository }}:${{ github.sha }}"
+
+          # 【新增】再给 demo-product（产品清单仓库）发一个事件，
+          # 告诉它"backend 这个微服务有了新镜像 sha"，由它负责改清单+部署整个产品。
+          # 这就是"一个微服务变更 → 整个产品自动更新"的触发点
+          gh api repos/${{ github.repository_owner }}/demo-product/dispatches \
+            -f event_type=service-image-updated \
+            -f "client_payload[service]=backend" \
+            -f "client_payload[tag]=${{ github.sha }}"
