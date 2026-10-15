@@ -26,4 +26,9 @@ def message():
 @app.post("/api/greet")
 def greet(req: GreetRequest):
     msg = " ".join([f"Hello, {req.name}!"] * max(1, req.times))
+    # 【毕业演示】在消息尾部追加签名：
+    #   - 只在末尾加后缀，"Hello, xxx!" 主体原样保留，
+    #     所以前端 e2e（断言包含 "Hello, ci!"）和产品冒烟（断言包含 "Hello, Product"）都不受影响
+    #   - 这就是"契约兼容的增量变更"：改实现、不破接口，下游测试自然全绿
+    msg += " [auto-deployed by CI]"
     return {"message": msg, "from": "backend"}

@@ -28,4 +28,6 @@ def test_greet():
 def test_greet_default():
     resp = client.post("/api/greet", json={})
     assert resp.status_code == 200
-    assert resp.json()["message"] == "Hello, world!"
+    # 同步更新：消息尾部新增了 " [auto-deployed by CI]" 后缀，
+    # 这是全仓库唯一一条"精确相等"断言，所以只有这一条测试需要跟着改
+    assert resp.json()["message"] == "Hello, world! [auto-deployed by CI]"
